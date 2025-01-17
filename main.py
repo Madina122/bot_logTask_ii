@@ -28,7 +28,7 @@ from gigachat import GigaChat
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_gigachat.chat_models import GigaChat
 
-token = '7464205627:AAFCGiq2x97k-AjNMlSaAWvY-i-Fym86G4U'
+token = '...' #(7464205627:AAFCGiq2x97k-AjNMlSaAWvY-i-Fym86G4U)
 
 GigaChatKey = "OTA1NGNjZDktMGVmMS00YjYzLThkZTAtMDRkNThiOWY4MjUyOjhiZTAwYzIwLTExNzQtNDkwNS1iMmY0LTM4NzUzZTA3MzA3YQ=="
 
