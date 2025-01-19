@@ -29,6 +29,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_gigachat.chat_models import GigaChat
 import uuid # СОздает уникальные идентификаторы
 
+
 token = '...' # 7611974083:AAEQbJ9k06RxYKy8ibBxRe0NymRx1nfNAbM
 
 GigaChatKey = "OTA1NGNjZDktMGVmMS00YjYzLThkZTAtMDRkNThiOWY4MjUyOjhiZTAwYzIwLTExNzQtNDkwNS1iMmY0LTM4NzUzZTA3MzA3YQ=="
