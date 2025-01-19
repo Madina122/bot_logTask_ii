@@ -27,8 +27,9 @@ import logging
 from gigachat import GigaChat
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_gigachat.chat_models import GigaChat
+import uuid # СОздает уникальные идентификаторы
 
-token = '7464205627:AAFCGiq2x97k-AjNMlSaAWvY-i-Fym86G4U'
+token = '...' # 7611974083:AAEQbJ9k06RxYKy8ibBxRe0NymRx1nfNAbM
 
 GigaChatKey = "OTA1NGNjZDktMGVmMS00YjYzLThkZTAtMDRkNThiOWY4MjUyOjhiZTAwYzIwLTExNzQtNDkwNS1iMmY0LTM4NzUzZTA3MzA3YQ=="
 
@@ -109,7 +110,7 @@ async def input_fio(message: Message, state: FSMContext):
     await message.answer("Введите ваш возраст: ")
     await state.set_state(UserForm.years)
 
-# Проверка и ввод группы
+# Проверка и ввод возраста
 @dp.message(F.text, UserForm.years)
 async def input_years(message: Message, state: FSMContext):
     if not message.text.isdigit():
@@ -259,10 +260,10 @@ async def cmd_mainmenu(message:Message):
         if item.get('text') == 'Уведомления':
             status = await get_user_status(user_id)
             if status:
-                 text = 'Уведомления ❌' 
+                 text = 'Уведомления ✅' 
                  item['status'] = True
             else:
-                 text = 'Уведомления ✅' 
+                 text = 'Уведомления ❌' 
                  item['status'] = False
             builder.button(text=text)
         else:
@@ -278,7 +279,7 @@ async def get_user_status(user_id: int):
             status = result[0]
         return status
 
-#Получение информации о уведомлениях
+#Получение информации о себе
 @dp.message(F.text == 'О себе')
 async def osebe(message : Message):
     builder = InlineKeyboardBuilder()
@@ -306,17 +307,222 @@ async def toggle_notifications(message: Message):
           await db.execute("UPDATE users SET statusrem = ? WHERE id = ?", (status, id)) 
           await db.commit()
     await cmd_mainmenu(message)
-                
-#Свободный режим
+
+# FSM для генерации задач для общего обсуждения
+class TrueFreeModeState(StatesGroup):
+    sentence_answer = State()          # Ответ, хочет ли пользователь продолжать отвечать на вопросы 
+    waiting_answer_for_task = State()  # Ожидание ответа на задачу
+    freemodeVictorine_answer = State() # окончательный ответ на задачу
+
+@dp.message(F.text == "Свободный режим", State(None))
+async def true_freemode(message:Message, state:FSMContext):
+    await start_freemode(message, state)
+
+# Старт свбодного режима 
+@dp.message(Command('freemode'))
+async def start_freemode(message:Message, state: FSMContext):
+    await message.answer("В свободном режиме вы можете уточнить задачу перед тем, как дать ответ. Хотите начать с новой задачи? ")
+    await state.set_state(TrueFreeModeState.sentence_answer)
 
 
-# FSM для генерации задач
+# Обработка ответа, хочет ли пользователь начать новую задачу
+@dp.message(TrueFreeModeState.sentence_answer)
+async def confirm_task(message: Message, state: FSMContext):
+
+    if message.text.lower() == 'да':
+        # Извлекаем текущие уровень сложности
+        async with aiosqlite.connect("users.db") as db:
+            async with db.execute("SELECT story, level FROM users WHERE id = ?", (message.from_user.id,)) as cursor: 
+                res = await cursor.fetchone()
+
+        #level = res[0]
+        story = res[0] if res[0] is not None else ''
+        level = res[1]
+        # Прописываем кнпки 
+        builder = InlineKeyboardBuilder()
+        builder.button(text = 'Изменить уровень сложности', callback_data='flevel')
+        builder.button(text = 'Инфо', callback_data='info2')
+        builder.button(text = 'получить задачу', callback_data='tasks')
+        builder.button(text = 'Остановить игру', callback_data='stop')
+        builder.adjust(2)
+
+        story += f"\n Пользователь: {message.text}"
+        await message.answer(f"Ваш текущий уровень сложности: {level}\n Выберит одно из дествий:", reply_markup=builder.as_markup())
+    
+        async with aiosqlite.connect("users.db") as db:
+            await db.execute("UPDATE users SET story = ? WHERE id = ?", (story, message.from_user.id))
+            await db.commit()
+
+    elif message.text.lower().strip() == 'нет':
+        await message.answer("Для окончания викторины введите команду: /stop")
+        await state.set_state(FreeModeState.answer)
+    else:
+        await message.answer("Пожалуйтса, дайте ответ в формате 'да' или 'нет' ")
+
+# Информация о свободной режиме 
+@dp.callback_query(F.data == 'info2')
+async def info_for_true_free_mode(callback: CallbackQuery):
+    description = (
+        "Добро пожаловать в режим ответа на задачу с возможностьюю уточнения задачи! \n\n"
+        "Вы можете настроить уровень сложности задачи под себя.\n"
+        "Если готовы начать игру, нажмите на соответсвующие кнопки. То же самое в противном случае.\n"
+        "Вы можете задавать уточняющие вопросы, ответ принимается при его инициализации в явном виде. \nПример:'Мой ответ ...'.\n"
+        "Баллы начисляются в зависимости от того, какой уровень сложности выбран: \n"
+        "  • Очень легкие: 1 балл\n"
+        "  • Легкие: 2 балла\n"
+        "  • Средние: 3 балла\n"
+        "  • Сложные: 4 балла\n"
+        "  • Очень сложные: 5 баллов"
+    )
+    await callback.message.edit_text(description, reply_markup=await create_back_keyboard())
+    await callback.answer()
+
+# Вызов генерации задачи
+@dp.callback_query(F.data == 'tasks')
+async def task_single(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Начинаем")
+    await callback.answer()
+    await state.set_state(TrueFreeModeState.waiting_answer_for_task)
+    await generate_question(callback)
+
+# Генерация задачи 
+async def generate_question(arg):
+    if isinstance(arg, types.Message):
+        id = arg.from_user.id
+        msg = arg
+    elif isinstance(arg, types.CallbackQuery):
+        id = arg.from_user.id
+        msg = arg.message
+
+    task_id = str(uuid.uuid4()) # идентификатор задачи
+
+    global chat_answer
+    async with aiosqlite.connect("users.db") as db:
+        async with db.execute("SELECT story, level FROM users WHERE id = ?", (id,)) as cursor:
+            res = await cursor.fetchone()
+            if res:
+                story = res[0] if res[0] else ""
+                level = res[1]
+            else:
+                await msg.answer("произошла проблема связанное с вашей анкетой. Обратитесь к авторам сего произведения.")
+                return
+
+    # генерируем задачу
+    message_questions = [
+        {
+            "role":"system",
+            "content":"Ты должен придумать задачу для развития логического мышления. "
+            "Есть 5 уровней сложности: очень лёгкий, лёгкий, средний, сложный, очень сложный. "
+            f"Сгенерируй задачу на уровне сложности: {level}"
+            "Не пиши решение или объяснение, только текст задачи. "
+            "Убедись, что такая задача не была предложена ранее."
+        }
+    ]
+
+    res = llm.invoke(message_questions)
+    await msg.answer(res.content)
+
+    story += f"\nБот: {res.content} (Id: {task_id})"
+
+    # Созраняем историю в бд
+    async with aiosqlite.connect("users.db") as db:
+        await db.execute("UPDATE users SET story = ? WHERE id = ?", (story,id))
+        await db.commit()
+
+    return task_id
+
+# Обработчик ответа пользователя
+@dp.message(TrueFreeModeState.waiting_answer_for_task)
+async def answer_waiting(message:Message, state:FSMContext):
+    id = message.from_user.id
+    async with aiosqlite.connect("users.db") as db:
+        async with db.execute("SELECT quizlevel, quizpoints, story FROM users WHERE id = ?", (id,)) as cursor:
+            res = await cursor.fetchone()
+    level = res[0]
+    points = res[1]
+    story = res[2]
+
+    # Извлекаем идентификатор
+    task_id = None
+    if 'Id:' in story:
+        task_id = story.split("Id:")[1].split()[0].strip()
+
+    alfa = 0
+    if level == "Очень легкие (для начинающих)":
+        alfa = 1
+    elif level == "Легкие (с небольшими трудностями)":
+        alfa = 2
+    elif level == "Средние (требующие размышления)":
+        alfa = 3
+    elif level == "Сложные (требующие много времени и усилий)":
+        alfa = 4
+    elif level == "Очень сложные (для экспертов)":
+        alfa = 5
+
+    user_conversation = message.text
+    if '?' in user_conversation:
+        message_conversations = [
+            {
+                "role":"system",
+                "content":f"Ты проверяющий и ты отвечаешь на вопросы пользователя, которые он тебе задает по задаче c id {task_id}. Отвечаешь до тех пор, пока пользователь в явном виде не даст ответ. При ответе на вопросы ты не можешь давать решение задачи, пользователь должен дать сам. Ты лишь отвечаешь на уточняющие вопросы пользователя по той задаче, которую ты сгенерировал ранее."
+            },
+            {
+                "role":"user",
+                "content":user_conversation
+            }
+        ]
+
+        res = await llm.ainvoke(message_conversations)
+        answering = res.content.strip()
+        await message.answer(f"Ответ на ваш вопрос: {answering}")
+    
+        new_conversation = f"Пользователь:{user_conversation}\nБот: {answering}"
+        story += new_conversation
+    else:
+        message_conversations = [
+            {
+                "role":"system",
+                "content":"Ты проверяющий, оцени логическую задачу. Если пользователь открыто напишет, что ответ на задачу является такой-то, то ты его оцениваешь и говоришь только 'Верно' если ответ правильный,'Неверно' в противном случае. Если 'Неверно', то выводишь правильный ответ, разъясняя его. Если ответ 'Верно', также разъясняешь его"
+            },
+            {
+                "role":"user",
+                "content":user_conversation
+            }
+        ]
+
+        res = await llm.ainvoke(message_conversations)
+        answering = res.content.strip()
+        if answering == "Верно":
+            points += alfa
+
+        new_conversation = f"Пользователь:{user_conversation}\nБот: {answering}"
+        story += new_conversation
+
+        # Добавение истории в бд
+        async with aiosqlite.connect("users.db") as db:
+            await db.execute("UPDATE users SET story = ? WHERE id = ?", (story, id,))
+            await db.commit()
+
+        await message.answer(f'Оценка: {answering} \nЗаработанный балл: {points}')
+
+    # Обновление рейтинга 
+    id = message.from_user.id
+    async with aiosqlite.connect("users.db") as db:
+        async with db.execute("SELECT rating FROM users WHERE id = ?", (id,)) as cursor:
+            rows = await cursor.fetchone()
+            rating = int(rows[0]) + points
+        await db.execute("UPDATE users SET rating = ?, quizpoints = ? WHERE id = ?", (rating, 0, id,))
+        await db.commit()
+    points = 0
+    await state.clear
+
+# FSM для генерации задач для викторины
 class FreeModeState(StatesGroup):
-    answer = State()
-    count = State()
-    quizmod = State()
-    notifications = State()
-    osebe = State()
+    answer = State()             # Ответы пользователя
+    count = State()              # количество вопросов
+    quizmod = State()            # режим викторины 
+    notifications = State()      # уведомления
+    osebe = State()              # ввод информации пользователя
 
 @dp.message(Command('quizmod'),State(None))
 async def cmd_freemod(message: Message):
@@ -334,6 +540,7 @@ async def inffreemode(callback: CallbackQuery):
 async def inffreemode(callback: CallbackQuery, state: FSMContext):
     await cmd_start2(callback.message, state)
 
+# Завершение викторины
 @dp.message(Command('stop'),FreeModeState.answer)
 async def cmd_stop(message: Message, state: FSMContext):
     id = message.from_user.id
@@ -341,20 +548,23 @@ async def cmd_stop(message: Message, state: FSMContext):
         async with db.execute("SELECT quizlevel, quizcount, quizpoints, quizschet FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
     points = res[2]
+    # Обновляем рейтинг пользователя
     async with aiosqlite.connect("users.db") as db:
         async with db.execute("SELECT rating FROM users WHERE id = ?", (id,)) as cursor:
             rows = await cursor.fetchone()
             rating = int(rows[0])+points
         await db.execute("UPDATE users SET rating = ?, quizpoints = ?, quizschet = ? WHERE id = ?", (rating, 0, 0, id)) 
-        await db.commit() 
+        await db.commit()  
     await message.answer(f'Викторина закончена досрочно\nКоличество заработанных баллов: {points}\nОбщий рейтинг: {rating}')
     await state.clear()
 
-@dp.message(((F.text == "Режим викторины") | (F.text == "/start") | (F.text == "/quizmod") | (F.text == "/menu")), FreeModeState.answer)
+# Окончание викторины
+@dp.message(((F.text == "Режим викторины") | (F.text == "/start") | (F.text == "/quizmod") | (F.text == "/menu") | (F.text == "/")), FreeModeState.answer)
 async def stop_quiz(message: Message, state: FSMContext):
     await message.answer("Для окончания викторины введите команду: /stop")
     await state.set_state(FreeModeState.answer)
 
+# Основная функция режима викторины, выводит меню с выбором уровня и количества задач
 async def freemode(arg):
     if isinstance(arg, types.Message):
      id = arg.from_user.id
@@ -362,24 +572,29 @@ async def freemode(arg):
     elif isinstance(arg, types.CallbackQuery):
       id = arg.from_user.id
       msg = arg.message
+    # Извлекаем текущие уровень сложности и количество задач из базы данных
     async with aiosqlite.connect("users.db") as db:
         async with db.execute("SELECT quizlevel, quizcount FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
     level = res[0]
     count = res[1]
+    # Создаем кнопки для управления режимом викторины
     builder = InlineKeyboardBuilder()
     builder.button(text='Уровень сложности', callback_data='flevel' )
     builder.button(text='Количество задач', callback_data='many' )
     builder.button(text='Начать викторину', callback_data='task1')
     builder.button(text='Инфо', callback_data='info1')
     builder.adjust(2)
+    # Выводим меню пользователю
     await msg.answer(f"Режим викторины\nВаш текущий уровень сложности:\n{level}\nКоличество задач: \n{count}\nВыберите действие:", reply_markup=builder.as_markup())
 
+# Обработка выбора количества задач в викторине
 @dp.callback_query(F.data == 'many')
 async def many_quizmod(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Введите количество задач")
     await state.set_state(FreeModeState.count)
 
+# Обработка ввода количества задач пользователем
 @dp.message(FreeModeState.count)
 async def many_choise(message: Message, state: FSMContext):
     id = message.from_user.id
@@ -398,15 +613,17 @@ async def many_choise(message: Message, state: FSMContext):
     await freemode(message)
 
 
-#Свободный режим выбор уровня
+#Режим выбор уровня
 @dp.callback_query(F.data == 'flevel')
 async def freemode_level(callback: CallbackQuery):
     id = callback.from_user.id
+    # Извлекаем текущий уровень сложности
     async with aiosqlite.connect("users.db") as db:
         async with db.execute("SELECT quizlevel FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
     level = res[0]
     builder = InlineKeyboardBuilder()
+    # Создаем кнопки для выбора уровня сложности
     for i, level_name in enumerate(levels):
        builder.button(text=level_name, callback_data=f'level{i+1}')
     #builder.button(text='Назад', callback_data='back_to_freemode')
@@ -414,6 +631,7 @@ async def freemode_level(callback: CallbackQuery):
     await callback.message.edit_text(f'Изменение уровня сложности\nВаш текущий уровень сложности:\n{level}\nВыберите новый уровень:', reply_markup=builder.as_markup())
     await callback.answer()
 
+# Обработка выбора уровня сложности
 @dp.callback_query(F.data.startswith('level'))
 async def process_level_choice(callback: CallbackQuery):
     id = callback.from_user.id
@@ -426,7 +644,7 @@ async def process_level_choice(callback: CallbackQuery):
     await callback.answer()
     await freemode(callback)
 
-#Свободный режим вывод информации
+#Режим викторины вывод информации
 @dp.callback_query(F.data == 'info1')
 async def infofreemode(callback: CallbackQuery):
     description = (
@@ -449,7 +667,7 @@ async def create_back_keyboard():
     builder.button(text="Назад", callback_data="back_to_menu")
     return builder.as_markup()
 
-#Свободный режим генерация задачи
+#Режим викторины генерация задачи
 @dp.callback_query(F.data == 'task1', State(None))
 async def taskfreedom(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Начинаем викторину")
@@ -482,7 +700,7 @@ async def process_chat_task(arg):
 
 
 # Обработчик ответа пользователя
-@dp.message(FreeModeState.answer, ~F.text.in_({"/stop", "/listuser","/start","/menu","/on", "/off", "Режим викторины"}))
+@dp.message(FreeModeState.answer, ~F.text.in_({"/stop", "/listuser","/start","/menu","/on", "/off", "нет", "Режим викторины"}))
 async def process_user_answer(message: Message, state: FSMContext):
     id = message.from_user.id
     async with aiosqlite.connect("users.db") as db:
@@ -540,18 +758,6 @@ async def process_user_answer(message: Message, state: FSMContext):
         await state.clear()
 
 
-
-# Команда для создания, редактирования и удаления сообщения(удалить)
-@dp.message(Command('editmsg'))
-async def edit_message(message: Message):
-    msg = await message.answer('Сообщение будет изменено через 2 секунды.')
-    async with ChatActionSender(bot=bot, chat_id=message.from_user.id, action="typing"):
-        await asyncio.sleep(2)
-        await bot.edit_message_text(text='Сообщение изменено!', chat_id=message.from_user.id, message_id=msg.message_id)
-    await asyncio.sleep(2)
-    await msg.delete()
-    await message.answer('Сообщение удалено.')
-
 # Обработчик для ListUser
 @dp.message(Command("listuser"))
 async def cmd_listUser(message: Message):
@@ -566,8 +772,6 @@ async def cmd_listUser(message: Message):
          response += f"ФИО: {fio}, Рейтинг: {rating}\n"
     
     await message.answer(response)
-
-
 
 # Ответ на произвольный текст
 @dp.message()
@@ -585,6 +789,7 @@ async def start_db():
             fio VARCHAR(255),
             years INTEGER,
             level VARCHAR(255),
+            story TEXT,
             time VARCHAR(255),
             rating INTEGER,
             statusrem BOOLEAN,
@@ -602,6 +807,7 @@ async def start_bot():
         BotCommand(command='listuser', description='Показать всех зарегетрированных пользователей'),
         BotCommand(command='menu', description='главное меню'),
         BotCommand(command='quizmod', description='Режим викторины'),
+        BotCommand(command='freemode', description='Свободный режим'),
         BotCommand(command='off', description='Отключить уведомления'),
         BotCommand(command='on', description='Включить уведомления'),
     ]
