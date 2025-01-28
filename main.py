@@ -30,7 +30,7 @@ from langchain_gigachat.chat_models import GigaChat
 import uuid # СОздает уникальные идентификаторы
 
 
-token = '7611974083:AAEQbJ9k06RxYKy8ibBxRe0NymRx1nfNAbM'
+token = '7465896802:AAFbeaw5V4dsXRXUkXF8SWfyecgzuMFW6oA'
 
 GigaChatKey = "OTA1NGNjZDktMGVmMS00YjYzLThkZTAtMDRkNThiOWY4MjUyOjhiZTAwYzIwLTExNzQtNDkwNS1iMmY0LTM4NzUzZTA3MzA3YQ=="
 
@@ -49,7 +49,7 @@ class UserForm(StatesGroup):
     level = State()
     time = State()
     Second = State()
-
+    task_type = State()
 
 
 bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -73,7 +73,7 @@ class SomeMiddleware(BaseMiddleware):
         state: FSMContext = data['state']
         current_state = await state.get_state()
 
-        if current_state in [UserForm.FIO.state, UserForm.years.state, UserForm.level.state, UserForm.time.state]:
+        if current_state in [UserForm.FIO.state, UserForm.years.state, UserForm.level.state, UserForm.time.state, UserForm.task_type.state]:
             return await handler(event, data)
         
         if data ['event_update'].message.text != '/start':
@@ -162,6 +162,45 @@ async def input_level(message: Message, state: FSMContext):
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [
+                KeyboardButton(text="Задачи на комбинаторику"),
+            ],
+            [
+                KeyboardButton(text='Загадки'),
+            ],
+            [
+                KeyboardButton(text='Задачи на смекалку'),
+            ],
+            [
+                KeyboardButton(text='Вероятностные задачи'),
+            ],
+            [
+                KeyboardButton(text='Тесты на IQ'),
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+    await message.answer(f"Выберите какие задания вы хотите выполнять:", reply_markup=keyboard)
+    await state.set_state(UserForm.task_type)
+
+# Выбор типа задач
+@dp.message(F.text, UserForm.task_type)
+async def input_type_task(message:Message, state:FSMContext):
+    task_type_options = [
+        "Задачи на комбинаторику",
+        "Загадки",
+        "Задачи на смекалку",
+        "Вероятностные задачи",
+        "Тесты на IQ"
+    ]
+    if message.text not in task_type_options:
+        await message.answer("Пожалуйста, выберите один из предложенных вариантов типа задач.")
+        return
+    await state.update_data(task_type=message.text)
+
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
                 KeyboardButton(text="Менее 15 минут"),
             ],
             [
@@ -176,7 +215,6 @@ async def input_level(message: Message, state: FSMContext):
         ],
         resize_keyboard=True
     )
-
     
     await message.answer(f"Сколько времени в день вы готовы уделять логическим задачам?", reply_markup=keyboard)
     await state.set_state(UserForm.time)
@@ -204,12 +242,12 @@ async def input_time(message: Message, state: FSMContext):
 
         if user:
             # Обновляем данные пользователя, кроме рейтинга
-            await db.execute('UPDATE users SET fio = ?, years = ?, level = ?, time = ? WHERE id = ?',
-                             (data['fio'], data['years'], data['level'], data['time'], message.from_user.id))
+            await db.execute('UPDATE users SET fio = ?, years = ?, level = ?, time = ?, task_type = ? WHERE id = ?',
+                             (data['fio'], data['years'], data['level'], data['time'], data['task_type'], message.from_user.id))
         else:
             # Создаем нового пользователя
-            await db.execute('INSERT INTO users (id, fio, years, level, time, rating, statusrem, quizlevel, quizcount, quizpoints, quizschet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                             (message.from_user.id, data['fio'], data['years'], data['level'], data['time'], 0, False, "Средние (требующие размышления)", 5, 0, 0))
+            await db.execute('INSERT INTO users (id, fio, years, level, time, task_type, rating, statusrem, quizlevel, quizcount, quizpoints, quizschet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                             (message.from_user.id, data['fio'], data['years'], data['level'], data['time'], data['task_type'], 0, False, "Средние (требующие размышления)", 5, 0, 0))
 
         await db.commit()
 
@@ -252,6 +290,14 @@ levels = [
         "Очень сложные (для экспертов)"
     ]
 
+tasks_types = [
+    "Задачи на комбинаторику",
+    "Загадки",
+    "Задачи на смекалку",
+    "Вероятностные задачи",
+    "Тесты на IQ"
+]
+
 # Главная команда меню
 @dp.message(Command('menu'), State(None))
 async def cmd_mainmenu(message:Message):
@@ -287,9 +333,9 @@ async def osebe(message : Message):
     builder.button(text="Пройти анкету заново", callback_data="back_to_discription")
     id = message.from_user.id
     async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT fio, rating, years, level, time FROM users WHERE id = ?", (id,)) as cursor:
+        async with db.execute("SELECT fio, rating, years, level, time, task_type FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
-    await message.answer(f"Информация о пользователе\nФИО: {res[0]}\nВаш рейтинг: {res[1]}\nВозраст: {res[2]}\nПредпочитаемая сложность заданий: {res[3]}\nКоличество времени, которое готовы тратить: {res[4]}",  reply_markup=builder.as_markup())
+    await message.answer(f"Информация о пользователе\nФИО: {res[0]}\nВаш рейтинг: {res[1]}\nВозраст: {res[2]}\nПредпочитаемая сложность заданий: {res[3]}\nПредпочитаемый тип логических задач: {res[5]}\nКоличество времени, которое готовы тратить: {res[4]}",  reply_markup=builder.as_markup())
 
     
 # Сообщение для пользователя
@@ -334,8 +380,8 @@ async def start_freemode(message:Message, state: FSMContext):
 @dp.message(TrueFreeModeState.sentence_answer)
 async def confirm_task(message: Message, state: FSMContext):
     if message.text.lower() == 'да':
-        level, builder = await handle_yes_action(state, message.from_user.id)
-        await message.answer(f"Ваш текущий уровень сложности: {level}\n Выберите одно из действий:", reply_markup=builder.as_markup())
+        level, task_type, builder = await handle_yes_action(state, message.from_user.id)
+        await message.answer(f"Ваш текущий уровень сложности: {level}\nВыбранный тип задачи: {task_type}\nВыберите одно из действий:", reply_markup=builder.as_markup())
     elif message.text.lower().strip() == 'нет':
         await state.set_state(TrueFreeModeState.stoping)
         await stoping_free_mode(message, state)
@@ -345,14 +391,16 @@ async def confirm_task(message: Message, state: FSMContext):
 
 async def handle_yes_action(state: FSMContext, user_id: int):
     async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT story, quizlevel FROM users WHERE id = ?", (user_id,)) as cursor: 
+        async with db.execute("SELECT story, quizlevel, task_type FROM users WHERE id = ?", (user_id,)) as cursor: 
             res = await cursor.fetchone()
 
     story = res[0] if res[0] is not None else ''
     level = res[1]
+    task_type = res[2]
 
     builder = InlineKeyboardBuilder()
     builder.button(text='Изменить уровень сложности', callback_data='flevel_freemode')
+    builder.button(text='Изменить тип задачи', callback_data='flevel_type_freemode')
     builder.button(text='Инфо', callback_data='info2')
     builder.button(text='Получить задачу', callback_data='tasks')
     builder.button(text='Остановить игру', callback_data='stop')
@@ -364,7 +412,7 @@ async def handle_yes_action(state: FSMContext, user_id: int):
         await db.execute("UPDATE users SET story = ? WHERE id = ?", (story, user_id))
         await db.commit()
 
-    return level, builder
+    return level, task_type, builder
 
 # Остановка игры
 @dp.callback_query(F.data == 'stop')
@@ -422,11 +470,12 @@ async def generate_question(arg):
 
     global chat_answer
     async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT story, level FROM users WHERE id = ?", (id,)) as cursor:
+        async with db.execute("SELECT story, quizlevel, task_type FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
             if res:
                 story = res[0] if res[0] else ""
                 level = res[1]
+                task_type = res[2]
             else:
                 await msg.answer("произошла проблема связанное с вашей анкетой. Обратитесь к авторам сего произведения.")
                 return
@@ -435,9 +484,10 @@ async def generate_question(arg):
     # генерируем задачу
     message_questions = [
     SystemMessage(
-        content= "Тебе нужно придумать задачу для развития логического мышления. Обязательно задачу, а не вопрос.Пусть есть 5 уровней сложности: очень лёгкий, лёгкий, сложный, очень сложный. " 
+        content= "Тебе нужно придумать задачу для развития логического мышления. Обязательно задачу, а не вопрос.Пусть есть 5 уровней сложности: очень лёгкий, лёгкий, сложный, очень сложный. И 6 разных типов задач: задачи на комбинаторику, Загадки, Задачи на смекалку, Криптограммы, Вероятностные задачи, Тесты на IQ."
     ),
-    "Придумай задачу, не пиши ответ или объяснение. Также в ответе необходимо дать только задачу. Задача должна сооветсвовать уровню сложности:" + level + "Убедись, что такой задачи не было предложено ранее."
+    "Придумай задачу, не пиши ответ или объяснение. Задача должна сооветсвовать уровню сложности:" + level + " и типу: " + task_type + ". Убедись, что такой задачи не было предложено ранее и убедись что данные задачи соответсвуют данным сложности и типу:" + level + " и " + task_type + " соответственно."
+    f"Проверь чтобы этой задачи не было в истории пользователя со стороны бота в {story}"
     ]
 
     res = llm.invoke(message_questions)
@@ -632,19 +682,21 @@ async def freemode(arg):
       msg = arg.message
     # Извлекаем текущие уровень сложности и количество задач из базы данных
     async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT quizlevel, quizcount FROM users WHERE id = ?", (id,)) as cursor:
+        async with db.execute("SELECT quizlevel, quizcount, task_type FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
     level = res[0]
     count = res[1]
+    task_type = res[2]
     # Создаем кнопки для управления режимом викторины
     builder = InlineKeyboardBuilder()
     builder.button(text='Уровень сложности', callback_data='flevel' )
+    builder.button(text='Изменить тип задач', callback_data='flevel_type_quiz')
     builder.button(text='Количество задач', callback_data='many' )
     builder.button(text='Начать викторину', callback_data='task1')
     builder.button(text='Инфо', callback_data='info1')
     builder.adjust(2)
     # Выводим меню пользователю
-    await msg.answer(f"Режим викторины\nВаш текущий уровень сложности:\n{level}\nКоличество задач: \n{count}\nВыберите действие:", reply_markup=builder.as_markup())
+    await msg.answer(f"Режим викторины\nВаш текущий уровень сложности:\n{level}\nВыбранный тип задачи: {task_type}\nКоличество задач: \n{count}\nВыберите действие:", reply_markup=builder.as_markup())
 
 # Обработка выбора количества задач в викторине
 @dp.callback_query(F.data == 'many')
@@ -673,7 +725,6 @@ async def many_choise(message: Message, state: FSMContext):
 #Режим выбор уровня
 @dp.callback_query(F.data.in_(['flevel_freemode', 'flevel']))
 async def freemode_level(callback: CallbackQuery):
-    print("Вызвали")
     id = callback.from_user.id
     source = callback.data
     # Извлекаем текущий уровень сложности
@@ -706,8 +757,8 @@ async def process_level_choice(callback: CallbackQuery):
     if source == 'flevel':
         await freemode(callback)
     elif source == 'flevel_freemode':
-        level, builder = await handle_yes_action(state=TrueFreeModeState.sentence_answer, user_id=callback.from_user.id)
-        await callback.message.edit_text(f"Ваш текущий уровень сложности: {level}\n Выберите одно из действий:", reply_markup=builder.as_markup())
+        level, task_type, builder = await handle_yes_action(state=TrueFreeModeState.sentence_answer, user_id=callback.from_user.id)
+        await callback.message.edit_text(f"Ваш текущий уровень сложности: {level}\nВыбранный тип задачи: {task_type}\nВыберите одно из действий:", reply_markup=builder.as_markup())
         await callback.answer()
 
 #Режим викторины вывод информации
@@ -750,15 +801,17 @@ async def process_chat_task(arg):
       msg = arg.message
     global chat_answer
     async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT quizlevel, story FROM users WHERE id = ?", (id,)) as cursor:
+        async with db.execute("SELECT quizlevel, story, task_type FROM users WHERE id = ?", (id,)) as cursor:
             res = await cursor.fetchone()
     level = res[0]
     story = res[1]
+    task_type = res[2]
     messages_questions = [
     SystemMessage(
-        content= "Тебе нужно придумать задачу для развития логического мышления. Пусть есть 5 уровней сложности: очень лёгкий, лёгкий, сложный, очень сложный. " 
+        content= "Тебе нужно придумать задачу для развития логического мышления. Пусть есть 5 уровней сложности: очень лёгкий, лёгкий, сложный, очень сложный. И 6 разных типов задач: задачи на комбинаторику, Загадки, Задачи на смекалку, Криптограммы, Вероятностные задачи, Тесты на IQ."
     ),
-    "Придумай задачу, не пиши ответ или объяснение. Также в ответе необходимо дать только задачу. Задача должна сооветсвовать уровню сложности:" + level + "Убедись, что такой задачи не было предложено ранее."
+    "Придумай задачу, не пиши ответ или объяснение. Задача должна сооветсвовать уровню сложности:" + level + " и типу: " + task_type + ". Убедись, что такой задачи не было предложено ранее и убедись что данные задачи соответсвуют данным сложности и типу:" + level + " и " + task_type + " соответственно."
+    f"Проверь чтобы этой задачи не было в истории пользователя со стороны бота в {story}"
     ]
     res = llm.invoke(messages_questions)
     messages_questions.insert(len(messages_questions) - 1,res)
@@ -835,6 +888,45 @@ async def process_user_answer(message: Message, state: FSMContext):
         points = 0
         await state.clear()
 
+# Функция изменения типа задачи
+@dp.callback_query(F.data.in_(['flevel_type_freemode', 'flevel_type_quiz']))
+async def changing_task_type(callback: CallbackQuery):
+    print("вызвано")
+    id = callback.from_user.id
+    source = callback.data
+    # Извлекаем текущий уровень сложности
+    async with aiosqlite.connect("users.db") as db:
+        async with db.execute("SELECT task_type FROM users WHERE id = ?", (id,)) as cursor:
+            res = await cursor.fetchone()
+    type = res[0]
+    builder = InlineKeyboardBuilder()
+    # Создаем кнопки для выбора уровня сложности
+    for i, type_name in enumerate(tasks_types):
+       builder.button(text=type_name, callback_data=f'type{i+1}:{source}')
+    builder.adjust(1)
+    await callback.message.edit_text(f'Изменение типа задачи\nВаш текущий тип задачи:\n{type}\nВыберите новый тип:', reply_markup=builder.as_markup())
+    await callback.answer()
+
+# Обработка выбора типа
+@dp.callback_query(F.data.startswith('type'))
+async def process_type_choice(callback:CallbackQuery):
+    print("вызвано снова")
+    id = callback.from_user.id
+    data_parts = callback.data.split(':')
+    type_number = int(data_parts[0].replace('type', ''))
+    source = data_parts[1]
+    type = tasks_types[type_number-1]
+    await callback.message.edit_text(f'Вы выбрали тип задачи: {type}')
+    async with aiosqlite.connect("users.db") as db:
+          await db.execute("UPDATE users SET  task_type = ? WHERE id = ?", (type, id))
+          await db.commit()
+    await callback.answer()
+    if source == 'flevel_type_quiz':
+        await freemode(callback)
+    elif source == 'flevel_type_freemode':
+        level, task_type, builder = await handle_yes_action(state=TrueFreeModeState.sentence_answer, user_id=callback.from_user.id)
+        await callback.message.edit_text(f"Ваш текущий уровень сложности: {level}\nВыбранный тип задачи: {task_type}\nВыберите одно из действий:", reply_markup=builder.as_markup())
+        await callback.answer()
 
 # Обработчик для ListUser
 @dp.message(Command("listuser"))
@@ -867,6 +959,7 @@ async def start_db():
             fio VARCHAR(255),
             years INTEGER,
             level VARCHAR(255),
+            task_type VARCHAR(255),
             story TEXT,
             time VARCHAR(255),
             rating INTEGER,
