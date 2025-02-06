@@ -144,6 +144,7 @@ async def input_years(message: Message, state: FSMContext):
     await message.answer("Какой уровень сложности логической задачи вы предпочитаете? ", reply_markup=keyboard)
     await state.set_state(UserForm.level)
 
+#выбор уровня сложности
 @dp.message(F.text, UserForm.level)
 async def input_level(message: Message, state: FSMContext):
     level_options = [
@@ -466,7 +467,7 @@ async def generate_question(arg):
         id = arg.from_user.id
         msg = arg.message
 
-    task_id = str(uuid.uuid4()) # идентификатор задачи
+    task_id = str(uuid.uuid4())  # идентификатор задачи
 
     global chat_answer
     async with aiosqlite.connect("users.db") as db:
@@ -477,31 +478,44 @@ async def generate_question(arg):
                 level = res[1]
                 task_type = res[2]
             else:
-                await msg.answer("произошла проблема связанное с вашей анкетой. Обратитесь к авторам сего произведения.")
+                await msg.answer("Произошла проблема, связанная с вашей анкетой. Обратитесь к авторам сего произведения.")
                 return
 
-    await msg.answer(f"ваш уровень {level}")
-    # генерируем задачу
-    message_questions = [
-    SystemMessage(
-        content= "Тебе нужно придумать задачу для развития логического мышления. Обязательно задачу, а не вопрос.Пусть есть 5 уровней сложности: очень лёгкий, лёгкий, сложный, очень сложный. И 6 разных типов задач: задачи на комбинаторику, Загадки, Задачи на смекалку, Криптограммы, Вероятностные задачи, Тесты на IQ."
-    ),
-    "Придумай задачу, не пиши ответ или объяснение. Задача должна сооветсвовать уровню сложности:" + level + " и типу: " + task_type + ". Убедись, что такой задачи не было предложено ранее и убедись что данные задачи соответсвуют данным сложности и типу:" + level + " и " + task_type + " соответственно."
-    f"Проверь чтобы этой задачи не было в истории пользователя со стороны бота в {story}"
-    ]
+    await msg.answer(f"Ваш уровень: {level}")
+    
+    unique_task_found = False
+    task_text = ""
+    while not unique_task_found:
+        # Генерация задачи
+        message_questions = [
+            SystemMessage(
+                content= "Тебе нужно придумать задачу для развития логического мышления. Обязательно задачу, а не вопрос. Пусть есть 5 уровней сложности: очень лёгкий, лёгкий, сложный, очень сложный. И 6 разных типов задач: задачи на комбинаторику, загадки, задачи на смекалку, криптограммы, вероятностные задачи, тесты на IQ."
+            ),
+            HumanMessage(
+                content=f"Придумай задачу, не пиши ответ или объяснение. Задача должна соответствовать уровню сложности: {level} и типу: {task_type}. Убедись, что такой задачи не было предложено ранее и убедись, что данные задачи соответствуют данным сложности и типу: {level} и {task_type} соответственно. Проверь, чтобы этой задачи не было в истории пользователя: {story}. Проверь внимательно, чтобы у пользователя не повторялась одна и та же задача. Если эта задача уже есть в {story}, то придумай новую, где задача должна соответствовать уровню сложности: {level} и типу: {task_type}"
+            )
+        ]
 
-    res = llm.invoke(message_questions)
-    await msg.answer(res.content)
+        res = await llm.ainvoke(message_questions)
+        task_text = res.content.strip()
 
-    story += f"\nБот: {res.content} (Id: {task_id})"
-    task_text = res.content.strip()
+        # Проверка на уникальность задачи
+        if task_text not in story:
+            unique_task_found = True
+        else:
+            await msg.answer("Эта задача уже встречалась в истории, генерирую новую задачу...")
 
-    # Созраняем историю в бд
+    # Обновляем историю
+    story += f"\nБот: {task_text} (Id: {task_id})"
+
+    # Сохраняем историю в БД
     async with aiosqlite.connect("users.db") as db:
-        await db.execute("UPDATE users SET story = ?, task_id = ?, task_text = ? WHERE id = ?", (story,task_id,task_text,id))
+        await db.execute("UPDATE users SET story = ?, task_id = ?, task_text = ? WHERE id = ?", (story, task_id, task_text, id))
         await db.commit()
 
+    await msg.answer(task_text)
     return task_id
+
 
 # Обработчик ответа пользователя
 @dp.message(TrueFreeModeState.waiting_answer_for_task)
@@ -837,6 +851,7 @@ async def process_user_answer(message: Message, state: FSMContext):
     level = res[0]
     schet = res[3]
     story = res[4]
+    story = "" if story is None else story
     alfa = 0 
     if level == "Очень легкие (для начинающих)":
         alfa = 1
@@ -932,16 +947,27 @@ async def process_type_choice(callback:CallbackQuery):
 @dp.message(Command("listuser"))
 async def cmd_listUser(message: Message):
     async with aiosqlite.connect("users.db") as db:
-        async with db.execute("SELECT fio, rating FROM users") as cursor:
+        async with db.execute("SELECT fio, rating FROM users ORDER BY rating DESC") as cursor:
             rows = await cursor.fetchall()
+    
     if not rows:
         await message.answer("Нет сохраненных пользователей")
         return
-    response = "Сохраненные данные:\n"
-    for fio, rating in rows:
-         response += f"ФИО: {fio}, Рейтинг: {rating}\n"
     
+    response = "Сохраненные данные:\n"
+    last_rating = None
+    last_index = 0
+    
+    for index, (fio, rating) in enumerate(rows, start=1):
+        if rating != last_rating:
+            last_index = index
+        
+        response += f"Место: {last_index}, ФИО: {fio}, Рейтинг: {rating}\n"
+        
+        last_rating = rating
+
     await message.answer(response)
+
 
 # Ответ на произвольный текст
 @dp.message()
